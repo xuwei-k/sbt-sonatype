@@ -34,6 +34,7 @@ object Sonatype extends sbt.Plugin {
     val drop = inputKey[Boolean]("Drop the repository")
     val releaseSonatype = InputKey[Boolean]("release-sonatype", "Publish to Maven central via close and promote")
     val releaseAllSonatype = InputKey[Boolean]("release-all-sonatype", "Publish all staging repositories to Maven central")
+    val validatePom = taskKey[Boolean]("validate pom.xml")
 
     val credentialHost = settingKey[String]("Credential host. Default is oss.sonatype.org")
     private[Sonatype] val restService = taskKey[NexusRESTService]("REST API")
@@ -61,6 +62,13 @@ object Sonatype extends sbt.Plugin {
     credentialHost := "oss.sonatype.org",
     profileName := organization.value,
     restService := new NexusRESTService(streams.value, repository.value, profileName.value, credentials.value, credentialHost.value),
+    validatePom := {
+      val errors = checkPom(xml.XML.loadFile(makePom.value))
+      errors.foreach{ e =>
+        streams.value.log.error("missing tag " + e)
+      }
+      errors.isEmpty
+    },
     stagingRepositoryProfiles := {
       val rest : NexusRESTService = restService.value
       val s = streams.value
@@ -133,6 +141,16 @@ object Sonatype extends sbt.Plugin {
 
   )
 
+  /** [[https://docs.sonatype.org/display/Repository/Central+Sync+Requirements]] */
+  private def checkPom(pom: xml.Node): List[String] =
+    List(
+      "modelVersion", "groupId", "artifactId", "version",
+      "packaging", "name", "description", "url", "licenses", "developers"
+    ).flatMap{ tag =>
+      if((pom \ tag).isEmpty) List("<" + tag + ">") else Nil
+    } ::: List(("scm", "url"), ("scm", "connection")).flatMap{ case (tag1, tag2) =>
+      if((pom \ tag1 \ tag2).isEmpty) List("<" + tag1 + "><" + tag2 + ">") else Nil
+    }
 
   private def releaseResolver(v: String): Resolver = {
     val nexus = "https://oss.sonatype.org/"
