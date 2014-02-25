@@ -45,11 +45,30 @@ object Sonatype extends sbt.Plugin {
     val sonatypeDefaultResolver = settingKey[Resolver]("Default Sonatype Resolver")
   }
 
+  import sbinary.DefaultProtocol._
+  import Cache.seqFormat
+  private implicit val stagingRepositoryProfileProtocol =
+    asProduct4(StagingRepositoryProfile.apply)(StagingRepositoryProfile.unapply(_).get)
 
   import complete.DefaultParsers._
 
-  private val repositoryIdParser: complete.Parser[Option[String]] =
-    (Space ~> token(StringBasic, "(repositoryId)")).?.!!!("invalid input. please input repository name")
+  private def repositoryIdParser(idList: List[String]): complete.Parser[Option[String]] = {
+    (idList match {
+      case Nil => (Space ~> token(StringBasic, "(repositoryId)")).?
+      case _   => (Space ~> idList.distinct.map(token(_)).foldLeft(token(StringBasic, _ => true))(_ | _)).?
+    }).!!!("invalid input. please input repository id")
+  }
+
+  private def makeTask[A](key: InputKey[A])(f: (Option[String], NexusRESTService) => A): Setting[_] = {
+    val parser = Defaults.loadForParser(SonatypeKeys.sonatypeStagingRepositoryProfiles)(
+      (state, ids) => repositoryIdParser(ids.map(_.map(_.repositoryId).toList) getOrElse Nil)
+    )
+
+    key <<= Def.inputTask{
+      val ids = parser.parsed
+      f(ids, SonatypeKeys.restService.value)
+    }
+  }
 
   import SonatypeKeys._
 
@@ -79,6 +98,7 @@ object Sonatype extends sbt.Plugin {
         s.log.info(repos.mkString("\n"))
       repos
     },
+    sonatypeStagingRepositoryProfiles <<= sonatypeStagingRepositoryProfiles storeAs sonatypeStagingRepositoryProfiles,
     sonatypeStagingProfiles := {
       val rest : NexusRESTService = restService.value
       val s = streams.value
@@ -95,30 +115,22 @@ object Sonatype extends sbt.Plugin {
       val rest : NexusRESTService = restService.value
       sonatypeStagingRepositoryProfiles.value
     },
-    sonatypeClose := {
-      val arg = repositoryIdParser.parsed
-      val rest : NexusRESTService = restService.value
+    makeTask(sonatypeClose){ (arg, rest) =>
       val repo = rest.findTargetRepository(Close, arg)
       rest.closeStage(repo)
     },
-    sonatypePromote := {
-      val arg = repositoryIdParser.parsed
-      val rest : NexusRESTService = restService.value
+    makeTask(sonatypePromote){ (arg, rest) =>
       val repo = rest.findTargetRepository(Promote, arg)
       rest.promoteStage(repo)
     },
-    sonatypeDrop := {
-      val arg = repositoryIdParser.parsed
-      val rest : NexusRESTService = restService.value
+    makeTask(sonatypeDrop){ (arg, rest) =>
       val repo = rest.findTargetRepository(Drop, arg)
       rest.dropStage(repo)
     },
     releaseSonatype := {
       streams.value.log.warn("releaseSonatype is deprecated. Use sonatypeRelease instead")
     },
-    sonatypeRelease := {
-      val arg = repositoryIdParser.parsed
-      val rest : NexusRESTService = restService.value
+    makeTask(sonatypeRelease){ (arg, rest) =>
       val repo = rest.findTargetRepository(CloseAndPromote, arg)
       rest.closeAndPromote(repo)
     },
