@@ -14,6 +14,17 @@
  * limitations under the License.
  */
 
+crossScalaVersions += "3.3.4"
+
+pluginCrossBuild / sbtVersion := {
+  scalaBinaryVersion.value match {
+    case "2.12" =>
+      (pluginCrossBuild / sbtVersion).value
+    case _ =>
+      "2.0.0-M2"
+  }
+}
+
 addCommandAlias("format", "scalafmtAll; scalafmtSbt")
 
 Global / onChangedBuildSource := ReloadOnSourceChanges
